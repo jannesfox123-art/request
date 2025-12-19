@@ -1,1 +1,100 @@
-echo Done!
+# Alle Ausgaben unterdrücken
+$ErrorActionPreference = 'SilentlyContinue'
+
+# Funktion zum Sammeln von Informationen
+function Get-PCInfo {
+    $info = @{}
+    
+    # Betriebssystem Informationen
+    $os = Get-CimInstance Win32_OperatingSystem
+    $info['OSName'] = $os.Caption
+    $info['OSVersion'] = $os.Version
+    $info['BuildNumber'] = $os.BuildNumber
+    $info['InstallDate'] = $os.InstallDate
+    $info['LastBootUpTime'] = $os.LastBootUpTime
+    
+    # Computer Informationen
+    $computer = Get-CimInstance Win32_ComputerSystem
+    $info['ComputerName'] = $computer.Name
+    $info['Manufacturer'] = $computer.Manufacturer
+    $info['Model'] = $computer.Model
+    $info['TotalPhysicalMemory'] = [math]::Round($computer.TotalPhysicalMemory/1GB, 2)
+    
+    # Prozessor Informationen
+    $cpu = Get-CimInstance Win32_Processor
+    $info['Processor'] = $cpu.Name
+    $info['CPUManufacturer'] = $cpu.Manufacturer
+    $info['NumberOfCores'] = $cpu.NumberOfCores
+    $info['NumberOfLogicalProcessors'] = $cpu.NumberOfLogicalProcessors
+    
+    # BIOS Informationen
+    $bios = Get-CimInstance Win32_BIOS
+    $info['BIOSVersion'] = $bios.SMBIOSBIOSVersion
+    $info['BIOSManufacturer'] = $bios.Manufacturer
+    $info['BIOSSerialNumber'] = $bios.SerialNumber
+    
+    # Festplatten Informationen
+    $disks = Get-CimInstance Win32_LogicalDisk | Where-Object {$_.DriveType -eq 3}
+    $diskInfo = @()
+    foreach ($disk in $disks) {
+        $diskInfo += @{
+            'Drive' = $disk.DeviceID
+            'SizeGB' = [math]::Round($disk.Size/1GB, 2)
+            'FreeSpaceGB' = [math]::Round($disk.FreeSpace/1GB, 2)
+        }
+    }
+    $info['Disks'] = $diskInfo
+    
+    # Netzwerk Adapter
+    $adapters = Get-CimInstance Win32_NetworkAdapterConfiguration | Where-Object {$_.IPEnabled -eq $true}
+    $networkInfo = @()
+    foreach ($adapter in $adapters) {
+        $networkInfo += @{
+            'Description' = $adapter.Description
+            'MACAddress' = $adapter.MACAddress
+            'IPAddress' = $adapter.IPAddress -join ', '
+            'IPSubnet' = $adapter.IPSubnet -join ', '
+            'DefaultGateway' = $adapter.DefaultIPGateway -join ', '
+            'DNSServers' = $adapter.DNSServerSearchOrder -join ', '
+        }
+    }
+    $info['NetworkAdapters'] = $networkInfo
+    
+    # Installierte Programme (nur 64-bit)
+    $programs = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*", 
+                                  "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*" |
+                 Where-Object {$_.DisplayName -ne $null}
+    $programList = $programs.DisplayName | Sort-Object
+    $info['InstalledProgramsCount'] = $programList.Count
+    
+    # Benutzer Informationen
+    $info['CurrentUser'] = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    
+    # Uptime
+    $uptime = (Get-Date) - $os.LastBootUpTime
+    $info['UptimeDays'] = $uptime.Days
+    $info['UptimeHours'] = $uptime.Hours
+    $info['UptimeMinutes'] = $uptime.Minutes
+    
+    return $info
+}
+
+# Informationen sammeln
+$pcInfo = Get-PCInfo
+
+# Als JSON in Datei speichern (anpassbarer Pfad)
+$outputPath = "$env:USERPROFILE\Desktop\PC_Info.json"
+$pcInfo | ConvertTo-Json -Depth 10 | Out-File -FilePath $outputPath -Encoding UTF8
+
+# Alternativ: Als CSV speichern
+$csvPath = "$env:USERPROFILE\Desktop\PC_Info.csv"
+$flatInfo = @{
+    'ComputerName' = $pcInfo.ComputerName
+    'OSName' = $pcInfo.OSName
+    'OSVersion' = $pcInfo.OSVersion
+    'Processor' = $pcInfo.Processor
+    'MemoryGB' = $pcInfo.TotalPhysicalMemory
+    'CurrentUser' = $pcInfo.CurrentUser
+    'Uptime' = "$($pcInfo.UptimeDays)d $($pcInfo.UptimeHours)h $($pcInfo.UptimeMinutes)m"
+}
+New-Object PSObject -Property $flatInfo | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
